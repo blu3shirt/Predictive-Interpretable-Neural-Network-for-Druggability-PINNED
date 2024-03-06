@@ -1,580 +1,221 @@
-{
- "cells": [
-  {
-   "cell_type": "code",
-   "execution_count": null,
-   "id": "f44a5f26",
-   "metadata": {},
-   "outputs": [],
-   "source": [
-    "import numpy as np\n",
-    "import pandas as pd\n",
-    "import matplotlib.pyplot as plt\n",
-    "from sklearn.metrics import (roc_auc_score, recall_score, precision_score, \n",
-    "confusion_matrix, ConfusionMatrixDisplay, matthews_corrcoef, f1_score)\n",
-    "import tensorflow as tf\n",
-    "from tensorflow import keras\n",
-    "from tensorflow.keras import layers\n",
-    "from tensorflow.keras.optimizers import Adam\n",
-    "from random import randint, shuffle\n",
-    "import time\n",
-    "from datetime import datetime\n",
-    "\n",
-    "def display_metrics(probs, targets, history, threshold=0.5):\n",
-    "    \"\"\"\n",
-    "    Displays model performance metrics, confusion matrix, and a histogram of \n",
-    "    predicted scores of a binary TensorFlow classifier model.\n",
-    "        \n",
-    "    Args:\n",
-    "        probs (tf.Tensor): druggability probabilities assigned by the model\n",
-    "        targets (pd.Series or other list-like): true labels\n",
-    "        history (tf.History): model training history\n",
-    "        threshold (float): druggability score required to designate a protein as \n",
-    "            druggable\n",
-    "\n",
-    "    Returns:\n",
-    "        None\n",
-    "    \n",
-    "    \"\"\"\n",
-    "    \n",
-    "    # Displays plots of the model's loss and AUC over the training epochs for \n",
-    "    # the training and validation sets\n",
-    "    \n",
-    "    print(\"Neural network performance\")\n",
-    "\n",
-    "    plt.plot(history.history['loss'], label='Train loss')\n",
-    "    plt.plot(history.history['val_loss'], label='validation loss')\n",
-    "    plt.xlabel('Epochs'), plt.ylabel('Loss')\n",
-    "    plt.legend()\n",
-    "    plt.show()\n",
-    "\n",
-    "    plt.plot(history.history['auc'], label='Train AUC')\n",
-    "    plt.plot(history.history['val_auc'], label='validation AUC')\n",
-    "    plt.xlabel('Epochs'), plt.ylabel('Loss')\n",
-    "    plt.legend()\n",
-    "    plt.show()\n",
-    "    \n",
-    "    \n",
-    "    # preds are predicted class labels obtained from the class probabilities\n",
-    "    \n",
-    "    preds = np.array([1 if x >= threshold else 0 for x in probs])\n",
-    "    \n",
-    "    \n",
-    "    # Computes and prints performance metrics for the model\n",
-    "        \n",
-    "    true_neg = np.sum((targets == 0) & (preds == 0))\n",
-    "    false_pos = np.sum((targets == 0) & (preds == 1))\n",
-    "\n",
-    "    sensitivity = 100 * recall_score(y_true=targets, y_pred=preds)\n",
-    "    specificity = 100 * true_neg / (true_neg + false_pos)\n",
-    "    accuracy = 100 * sum(preds == targets) / len(targets)\n",
-    "    auc = 100 * roc_auc_score(y_true=targets, y_score=probs)\n",
-    "\n",
-    "    print(\"This model:\")\n",
-    "    print(\"SN:\",\n",
-    "              round(sensitivity, 2),\n",
-    "              '\\t',\n",
-    "              \"SP:\",\n",
-    "              round(specificity, 2),\n",
-    "              '\\t',\n",
-    "              \"ACC:\",\n",
-    "              round(accuracy, 2),\n",
-    "              '\\t',\n",
-    "              \"AUC:\",\n",
-    "              round(auc, 2),\n",
-    "             )\n",
-    "    \n",
-    "    \n",
-    "    # Generates and displays the confusion matrix\n",
-    "\n",
-    "    cm = confusion_matrix(targets, preds)\n",
-    "    disp = ConfusionMatrixDisplay(confusion_matrix=cm, \n",
-    "                                  display_labels=[\"No drug\", \"Drug\"])\n",
-    "    disp.plot()\n",
-    "    plt.show()\n",
-    "    \n",
-    "    probs = np.array(probs)\n",
-    "    \n",
-    "    \n",
-    "    # Displays a histogram of class probabilities from 0 to 1, with positives \n",
-    "    # and negatives separated\n",
-    "            \n",
-    "    pos_probs = np.array([probs[x] for x in range(len(probs)) \n",
-    "                          if targets.iloc[x] == 1]).flatten()\n",
-    "    neg_probs = np.array([probs[x] for x in range(len(probs)) \n",
-    "                          if targets.iloc[x] == 0]).flatten()\n",
-    "        \n",
-    "    plt.hist([pos_probs, neg_probs], \n",
-    "             alpha=0.5, \n",
-    "             bins=48, \n",
-    "             density=True, \n",
-    "             histtype = 'stepfilled', \n",
-    "             label=['Drugged proteins', 'Undrugged proteins'])\n",
-    "    plt.xlabel('Druggability score')\n",
-    "    plt.legend()\n",
-    "    plt.show()\n",
-    "            \n",
-    "    return None\n",
-    "                                   \n",
-    "                                   \n",
-    "def fit_multiscore_nn(train_inputs, \n",
-    "                      train_labels, \n",
-    "                      validation_inputs, \n",
-    "                      validation_labels):\n",
-    "    \"\"\"\n",
-    "    Creates and trains the neural network classifier model and returns the model\n",
-    "    along with its training history.\n",
-    "    \n",
-    "    Args:\n",
-    "        train_inputs (list of DataFrames): List of the inputs to each of the 4 \n",
-    "            networks as DataFrames for the training set\n",
-    "        train_labels (pd.Series or other list-like): Labels for the training \n",
-    "            data\n",
-    "        validation_inputs (list of DataFrames): List of the inputs to each of \n",
-    "            the 4 networks as DataFrames for the validation set\n",
-    "        validation_labels (pd.Series or other list-like): Labels for the \n",
-    "            validation data\n",
-    "\n",
-    "    Returns:\n",
-    "        model (tf.keras.Model): Trained model\n",
-    "        history (tf.History): Model training history\n",
-    "        \n",
-    "    \"\"\"\n",
-    "    \n",
-    "    # Generates the subscore for the sequence and structure subnetwork\n",
-    "        \n",
-    "    seq_and_struc_input = keras.Input(shape=(122,))\n",
-    "    seq_and_struc = layers.Dense(units=64, \n",
-    "                                 activation='relu', \n",
-    "                                 kernel_regularizer=l2)(seq_and_struc_input)\n",
-    "    seq_and_struc = layers.Dense(units=1, kernel_regularizer=l2)(seq_and_struc)\n",
-    "    \n",
-    "    \n",
-    "    # Generates the subscore for the localization subnetwork\n",
-    "    \n",
-    "    localization_input = keras.Input(shape=(558,))\n",
-    "    localization = layers.Dense(units=512, \n",
-    "                                activation='relu',\n",
-    "                                kernel_regularizer=l2)(localization_input)\n",
-    "    localization = layers.Dense(units=1, kernel_regularizer=l2)(localization)\n",
-    "    \n",
-    "    \n",
-    "    # Generates the subscore for the biological functions subnetwork\n",
-    "    \n",
-    "    bio_func_input = keras.Input(shape=(3464,))\n",
-    "    bio_func = layers.Dense(units=2048, \n",
-    "                            activation='relu', \n",
-    "                            kernel_regularizer=l2)(bio_func_input)\n",
-    "    bio_func = layers.Dense(units=1, kernel_regularizer=l2)(bio_func)\n",
-    "    \n",
-    "    \n",
-    "    # Generates the subscore for the network information subnetwork\n",
-    "    \n",
-    "    network_info_input = keras.Input(shape=(8,))\n",
-    "    network_info = layers.Dense(units=8, \n",
-    "                                activation='relu', \n",
-    "                                kernel_regularizer=l2)(network_info_input)\n",
-    "    network_info = layers.Dense(units=1, kernel_regularizer=l2)(network_info)\n",
-    "    \n",
-    "    \n",
-    "    # Generates the final output from the 4 subscores\n",
-    "    \n",
-    "    subscores = layers.Concatenate(name='subscores')([seq_and_struc, \n",
-    "                                                      localization, \n",
-    "                                                      bio_func, \n",
-    "                                                      network_info])\n",
-    "        \n",
-    "    model_output = tf.math.reduce_sum(subscores, axis=1)\n",
-    "    \n",
-    "    model = keras.Model(inputs=[seq_and_struc_input, \n",
-    "                                localization_input, \n",
-    "                                bio_func_input, \n",
-    "                                network_info_input], \n",
-    "                        outputs=model_output)\n",
-    "    \n",
-    "    \n",
-    "    # Compiles and trains the model\n",
-    "\n",
-    "    callback = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=5)\n",
-    "\n",
-    "    model.compile(optimizer=Adam(learning_rate=10**-3.5), loss=bce, \n",
-    "                  metrics=tf.keras.metrics.AUC(name=\"auc\", from_logits=True))\n",
-    "    \n",
-    "    model.summary()\n",
-    "    \n",
-    "    with tf.device('/device:GPU:0'):\n",
-    "        history = model.fit(x=train_inputs, \n",
-    "                            y=train_labels,\n",
-    "                            batch_size=32, \n",
-    "                            epochs=200, \n",
-    "                            shuffle=True,\n",
-    "                            validation_data=(validation_inputs, validation_labels),\n",
-    "                            callbacks=[callback],\n",
-    "                            verbose=verbose)\n",
-    "    \n",
-    "    return model, history\n",
-    "\n",
-    "\n",
-    "def k_split(input_set, k):\n",
-    "    \"\"\"\n",
-    "    Splits input data into k equally-sized sets.\n",
-    "    \n",
-    "    Args:\n",
-    "        input_set (DataFrame): data to split\n",
-    "        k (int): number of splits\n",
-    "        \n",
-    "    Returns:\n",
-    "        split_sets (list of DataFrames): list containing k split dataframes\n",
-    "        \n",
-    "    \"\"\"\n",
-    "    \n",
-    "    input_len = len(input_set)\n",
-    "    \n",
-    "    next_n = 0\n",
-    "        \n",
-    "    k_assigns = np.array([])\n",
-    "        \n",
-    "    for i in range(input_len):\n",
-    "        if next_n == k:\n",
-    "            next_n = 0\n",
-    "\n",
-    "        k_assigns = np.append(k_assigns, next_n)\n",
-    "\n",
-    "        next_n += 1\n",
-    "        \n",
-    "    shuffle(k_assigns)\n",
-    "\n",
-    "    input_set['k'] = k_assigns\n",
-    "\n",
-    "    split_sets = []\n",
-    "\n",
-    "    for i in range(k):\n",
-    "        set_k = input_set[input_set['k'] == i].drop('k', axis=1)\n",
-    "\n",
-    "        split_sets.append(set_k)\n",
-    "        \n",
-    "    return split_sets\n",
-    "\n",
-    "\n",
-    "def process_set(protein_set):\n",
-    "    \"\"\"\n",
-    "    Accepts a set of proteins, including both features and labels, and unpacks \n",
-    "    into protein names, features separated into different categories, and \n",
-    "    labels.\n",
-    "\n",
-    "    Args:\n",
-    "        protein_set (DataFrame): dataset to be unpacked\n",
-    "        \n",
-    "    Returns:\n",
-    "        names (pd.Series): protein UniProt IDs\n",
-    "        seq_and_struc (DataFrame): sequence and structure features\n",
-    "        localization (DataFrame): localization features\n",
-    "        bio_func (DataFrame): biological function features\n",
-    "        network_info (DataFrame): network information features\n",
-    "        labels (pd.Series): protein labels\n",
-    "        \n",
-    "    \"\"\"\n",
-    "    \n",
-    "    names = protein_set['Protein']\n",
-    "        \n",
-    "    seq_and_struc = protein_set[seq_and_struc_names]\n",
-    "    localization = protein_set[localization_names]\n",
-    "    bio_func = protein_set[bio_func_names]\n",
-    "    network_info = protein_set[network_info_names]\n",
-    "    \n",
-    "    labels = protein_set['drugged']\n",
-    "\n",
-    "    return names, seq_and_struc, localization, bio_func, network_info, labels\n",
-    "\n",
-    "\n",
-    "def vanilla_oversample(split_sets):\n",
-    "    \"\"\"\n",
-    "    Accepts a list of dataframes representing a larget dataset split into k \n",
-    "    parts and randomly oversamples the positive class within each dataframe to \n",
-    "    generate a new frame with balanced classes.\n",
-    "        \n",
-    "    Args:\n",
-    "        split_sets (list of DataFrames): datasets to be balanced\n",
-    "        \n",
-    "    Returns:\n",
-    "        oversamples (list of DataFrames): new oversampled dataframes\n",
-    "        \n",
-    "    \"\"\"\n",
-    "    \n",
-    "    oversamples = []\n",
-    "    \n",
-    "    \n",
-    "    # Loops through the dataframes in split_sets and randomly oversamples the \n",
-    "    # positive class\n",
-    "    \n",
-    "    for i in split_sets:   \n",
-    "        positives = i[i['drugged'] == 1]\n",
-    "        negatives = i[i.Protein.isin(positives['Protein']) == False]\n",
-    "        positives = positives.sample(n=len(negatives), replace=True)\n",
-    "        \n",
-    "        oversamples.append(pd.concat([positives, negatives]))\n",
-    "            \n",
-    "    return oversamples\n",
-    "\n",
-    "\n",
-    "def get_false_negatives(probs, labels, protein_names):\n",
-    "    \"\"\"\n",
-    "    Identifies the false negatives in list of protein IDs with their\n",
-    "    corresponding model-assigned druggability scores and actual labels.\n",
-    "        \n",
-    "    Args:\n",
-    "        probs (tf.Tensor): probabilities assigned by a model\n",
-    "        labels (pd.Series): true labels\n",
-    "        protein_names (pd.Series): protein UniProt IDs\n",
-    "        \n",
-    "    Returns:\n",
-    "        false_neg (list): UniProt IDs of false negatives\n",
-    "        \n",
-    "    \"\"\"\n",
-    "    \n",
-    "    preds = np.round(probs).flatten()\n",
-    "    \n",
-    "    false_neg = []\n",
-    "    \n",
-    "    for i in range(len(labels)):\n",
-    "        if labels.iloc[i] == 1 and preds[i] == 0:\n",
-    "            false_neg.append(protein_names.iloc[i])\n",
-    "    \n",
-    "    return false_neg\n",
-    "\n",
-    "\n",
-    "def shuffle_frame(df):\n",
-    "    \"\"\"\n",
-    "    Randomly shuffles an inputted dataframe.\n",
-    "        \n",
-    "    Args:\n",
-    "        df (DataFrame): dataframe to be shuffled\n",
-    "        \n",
-    "    Returns:\n",
-    "        df_copy (DataFrame): shuffled frame\n",
-    "        \n",
-    "    \"\"\"\n",
-    "    \n",
-    "    df_copy = df.copy()\n",
-    "    \n",
-    "    df_copy = df_copy.sample(frac=1).reset_index(drop=True)\n",
-    "        \n",
-    "    return df_copy\n",
-    "\n",
-    "mse = tf.keras.losses.MeanSquaredError()\n",
-    "bce = tf.keras.losses.BinaryCrossentropy(from_logits=True)\n",
-    "\n",
-    "l2 = tf.keras.regularizers.L2(l2=0.001)\n",
-    "l1l2 = tf.keras.regularizers.L1L2(l1=0.001, l2=0.001)"
-   ]
-  },
-  {
-   "cell_type": "code",
-   "execution_count": null,
-   "id": "cdcd3b71-40c3-4fa4-85ed-4cf00fe3d97a",
-   "metadata": {},
-   "outputs": [],
-   "source": [
-    "# Imports the full processed dataset and the subnetwork assignments of all of \n",
-    "# its features\n",
-    "\n",
-    "full_set = pd.read_csv(\"processed_data/full_set.csv\", index_col=0)\n",
-    "\n",
-    "seq_and_struc_names = pd.read_csv(\"processed_data/seq_and_struc_names.csv\", \n",
-    "                                  index_col=0, \n",
-    "                                  squeeze=True).tolist()\n",
-    "localization_names = pd.read_csv(\"processed_data/localization_names.csv\", \n",
-    "                                 index_col=0, \n",
-    "                                 squeeze=True).tolist()\n",
-    "bio_func_names = pd.read_csv(\"processed_data/bio_func_names.csv\", \n",
-    "                             index_col=0, \n",
-    "                             squeeze=True).tolist()\n",
-    "network_info_names = pd.read_csv(\"processed_data/network_info_names.csv\", \n",
-    "                                 index_col=0, \n",
-    "                                 squeeze=True).tolist()"
-   ]
-  },
-  {
-   "cell_type": "code",
-   "execution_count": null,
-   "id": "5f64b87d-8c97-4371-8464-1e246a2fd704",
-   "metadata": {},
-   "outputs": [],
-   "source": [
-    "# Separates the test data from the rest of the dataset\n",
-    "# Randomly splits the training and validation sets k ways for cross-validation\n",
-    "\n",
-    "test_set = full_set[full_set.test == 1].drop('test', axis=1)\n",
-    "\n",
-    "train_validation_set = full_set[full_set.Protein.isin(test_set['Protein']) == \n",
-    "                          False].drop('test', axis=1)\n",
-    "\n",
-    "k = 5\n",
-    "\n",
-    "split_sets = k_split(train_validation_set, k)"
-   ]
-  },
-  {
-   "cell_type": "code",
-   "execution_count": null,
-   "id": "f7b48bf8-8a89-457e-8dea-aca8124ed325",
-   "metadata": {},
-   "outputs": [],
-   "source": [
-    "start_time = time.time()\n",
-    "\n",
-    "verbose = True\n",
-    "\n",
-    "aucs = []\n",
-    "final_validation_losses = []\n",
-    "\n",
-    "\n",
-    "# n_trials is the number of cross-validation trials to perform\n",
-    "# Must be <= k, as each trial uses the next set in the k split as the validation \n",
-    "# set\n",
-    "\n",
-    "n_trials = 5\n",
-    "\n",
-    "oversamples = vanilla_oversample(split_sets)\n",
-    "\n",
-    "all_false_negs = []\n",
-    "\n",
-    "\n",
-    "# Iterates through the split sets, using the set at index i as the validation \n",
-    "# set and all the others as the training set\n",
-    "\n",
-    "for i in range(n_trials):\n",
-    "    \n",
-    "    train_sets = [oversamples[x] for x in range(k) if x != i]\n",
-    "                    \n",
-    "    train_set = pd.concat(train_sets)\n",
-    "    \n",
-    "    validation_set = split_sets[i]\n",
-    "        \n",
-    "    (train_names, train_seq_and_struc, train_localization, train_bio_func, \n",
-    "    train_network_info, train_labels) = process_set(train_set)\n",
-    "    \n",
-    "    (validation_names, validation_seq_and_struc, validation_localization, \n",
-    "     validation_bio_func, validation_network_info, \n",
-    "     validation_labels) = process_set(validation_set)\n",
-    "    \n",
-    "    train_inputs = [train_seq_and_struc, \n",
-    "                    train_localization, \n",
-    "                    train_bio_func, \n",
-    "                    train_network_info]\n",
-    "    \n",
-    "    validation_inputs = [validation_seq_and_struc, \n",
-    "                         validation_localization, \n",
-    "                         validation_bio_func, \n",
-    "                         validation_network_info]\n",
-    "                                    \n",
-    "    print(\"Split #: \", i + 1)\n",
-    "\n",
-    "    model, history = fit_multiscore_nn(train_inputs, \n",
-    "                                       train_labels, \n",
-    "                                       validation_inputs, \n",
-    "                                       validation_labels)\n",
-    "    \n",
-    "    \n",
-    "    # Predicts the labels of the validation set using the model\n",
-    "\n",
-    "    probs = tf.keras.activations.sigmoid(model.predict(validation_inputs))    \n",
-    "    \n",
-    "    \n",
-    "    # Displays the metrics and graphs from the model's training\n",
-    "    \n",
-    "    display_metrics(probs, validation_labels, history)\n",
-    "    \n",
-    "    \n",
-    "    # Saves the model's performance as measured by validation AUC\n",
-    "            \n",
-    "    aucs.append(100 * roc_auc_score(y_true=validation_labels, y_score=probs))\n",
-    "    \n",
-    "    \n",
-    "    # Saves the model's performance as measured by validation loss\n",
-    "    \n",
-    "    score = model.evaluate(validation_inputs, validation_labels, verbose=False)\n",
-    "    \n",
-    "    final_validation_losses.append(score[0])\n",
-    "    \n",
-    "    \n",
-    "    # Gets the false negatives and adds them to the list\n",
-    "    \n",
-    "    false_negs = get_false_negatives(probs, validation_labels, validation_names)\n",
-    "    all_false_negs += false_negs\n",
-    "    \n",
-    "\n",
-    "# Displays the AUC for each trial and the time elapsed in the experiment\n",
-    "\n",
-    "print(aucs)\n",
-    "    \n",
-    "elapsed_time = time.time() - start_time\n",
-    "\n",
-    "print(\"Time elapsed (s): \", elapsed_time)"
-   ]
-  },
-  {
-   "cell_type": "code",
-   "execution_count": null,
-   "id": "c014776c-b76e-440c-8a2c-42d602625d5a",
-   "metadata": {},
-   "outputs": [],
-   "source": [
-    "def get_subscores(features, model):\n",
-    "    \"\"\"\n",
-    "    Accepts features for a set of proteins, divided by subnetwork, and generates\n",
-    "    scores for each of the subnetworks.\n",
-    "        \n",
-    "    Args:\n",
-    "        features (list of DataFrames): input features for each network\n",
-    "        model (tf.Model): model to be used to obtain subscores\n",
-    "        \n",
-    "    Returns:\n",
-    "        subscores_output (tf.Tensor): subscores from each of the networks\n",
-    "        \n",
-    "    \"\"\"\n",
-    "    \n",
-    "    # Generates the subscores for each of the networks\n",
-    "    \n",
-    "    subscores_model = keras.Model(inputs=model.input, \n",
-    "                                  outputs=model.get_layer('subscores').output)\n",
-    "    \n",
-    "    subscores_output = subscores_model.predict(features, verbose=False)\n",
-    "    \n",
-    "    total_scores = tf.math.reduce_sum(subscores_output, axis=1)\n",
-    "    \n",
-    "    \n",
-    "    # Generates the final druggability probability and combines it with the\n",
-    "    # subscores\n",
-    "    \n",
-    "    drug_probs = tf.keras.activations.sigmoid(\n",
-    "        tf.reshape(total_scores, shape=(len(total_scores),1))) * 100\n",
-    "\n",
-    "    subscores_output = tf.concat([drug_probs, subscores_output], axis=1)\n",
-    "            \n",
-    "    return subscores_output"
-   ]
-  }
- ],
- "metadata": {
-  "kernelspec": {
-   "display_name": "Python 3 (ipykernel)",
-   "language": "python",
-   "name": "python3"
-  },
-  "language_info": {
-   "codemirror_mode": {
-    "name": "ipython",
-    "version": 3
-   },
-   "file_extension": ".py",
-   "mimetype": "text/x-python",
-   "name": "python",
-   "nbconvert_exporter": "python",
-   "pygments_lexer": "ipython3",
-   "version": "3.7.13"
-  }
- },
- "nbformat": 4,
- "nbformat_minor": 5
-}
+import pandas as pd
+import time
+import tensorflow as tf
+from sklearn.metrics import roc_auc_score
+from tensorflow import keras
+import numpy as np
+import pandas as pd
+import tensorflow as tf
+from tensorflow import keras
+from tensorflow.keras import layers
+from tensorflow.keras.optimizers import Adam
+from random import randint, shuffle
+import time
+from datetime import datetime
+import matplotlib.pyplot as plt
+from sklearn.metrics import (roc_auc_score, recall_score, precision_score, 
+confusion_matrix, ConfusionMatrixDisplay, matthews_corrcoef, f1_score)
+
+def display_metrics(probs, targets, history, threshold=0.5):
+    """
+    Displays model performance metrics, confusion matrix, and a histogram of 
+    predicted scores of a binary TensorFlow classifier model.
+        
+    Args:
+        probs (tf.Tensor): druggability probabilities assigned by the model
+        targets (pd.Series or other list-like): true labels
+        history (tf.History): model training history
+        threshold (float): druggability score required to designate a protein as 
+            druggable
+
+    Returns:
+        None
+    
+    """
+    
+    # Displays plots of the model's loss and AUC over the training epochs for 
+    # the training and validation sets
+    
+    print("Neural network performance")
+
+    plt.plot(history.history['loss'], label='Train loss')
+    plt.plot(history.history['val_loss'], label='validation loss')
+    plt.xlabel('Epochs'), plt.ylabel('Loss')
+    plt.legend()
+    plt.show()
+
+    plt.plot(history.history['auc'], label='Train AUC')
+    plt.plot(history.history['val_auc'], label='validation AUC')
+    plt.xlabel('Epochs'), plt.ylabel('Loss')
+    plt.legend()
+    plt.show()
+    
+    
+    # preds are predicted class labels obtained from the class probabilities
+    
+    preds = np.array([1 if x >= threshold else 0 for x in probs])
+    
+    
+    # Computes and prints performance metrics for the model
+        
+    true_neg = np.sum((targets == 0) & (preds == 0))
+    false_pos = np.sum((targets == 0) & (preds == 1))
+
+    sensitivity = 100 * recall_score(y_true=targets, y_pred=preds)
+    specificity = 100 * true_neg / (true_neg + false_pos)
+    accuracy = 100 * sum(preds == targets) / len(targets)
+    auc = 100 * roc_auc_score(y_true=targets, y_score=probs)
+
+    print("This model:")
+    print("SN:",
+              round(sensitivity, 2),
+              '\\t',
+              "SP:",
+              round(specificity, 2),
+              '\\t',
+              "ACC:",
+              round(accuracy, 2),
+              '\\t',
+              "AUC:",
+              round(auc, 2),
+             )
+    
+    
+    # Generates and displays the confusion matrix
+
+    cm = confusion_matrix(targets, preds)
+    disp = ConfusionMatrixDisplay(confusion_matrix=cm, 
+                                  display_labels=["No drug", "Drug"])
+    disp.plot()
+    plt.show()
+    
+    probs = np.array(probs)
+    
+    
+    # Displays a histogram of class probabilities from 0 to 1, with positives 
+    # and negatives separated
+            
+    pos_probs = np.array([probs[x] for x in range(len(probs)) 
+                          if targets.iloc[x] == 1]).flatten()
+    neg_probs = np.array([probs[x] for x in range(len(probs)) 
+                          if targets.iloc[x] == 0]).flatten()
+        
+    plt.hist([pos_probs, neg_probs], 
+             alpha=0.5, 
+             bins=48, 
+             density=True, 
+             histtype = 'stepfilled', 
+             label=['Drugged proteins', 'Undrugged proteins'])
+    plt.xlabel('Druggability score')
+    plt.legend()
+    plt.show()
+            
+    return None
+                                   
+    
+    
+def fit_multiscore_nn(train_inputs, 
+                      train_labels, 
+                      validation_inputs, 
+                      validation_labels):
+    """
+    Creates and trains the neural network classifier model and returns the model
+    along with its training history.
+    
+    Args:
+        train_inputs (list of DataFrames): List of the inputs to each of the 4 
+            networks as DataFrames for the training set
+        train_labels (pd.Series or other list-like): Labels for the training 
+            data
+        validation_inputs (list of DataFrames): List of the inputs to each of 
+            the 4 networks as DataFrames for the validation set
+        validation_labels (pd.Series or other list-like): Labels for the 
+            validation data
+
+    Returns:
+        model (tf.keras.Model): Trained model
+        history (tf.History): Model training history
+        
+    """
+    
+    # Generates the subscore for the sequence and structure subnetwork
+        
+    seq_and_struc_input = keras.Input(shape=(122,))
+    seq_and_struc = layers.Dense(units=64, 
+                                 activation='relu', 
+                                 kernel_regularizer=l2)(seq_and_struc_input)
+    seq_and_struc = layers.Dense(units=1, kernel_regularizer=l2)(seq_and_struc)
+    
+    
+    
+    # Generates the subscore for the localization subnetwork
+    
+    localization_input = keras.Input(shape=(558,))
+    localization = layers.Dense(units=512, 
+                                activation='relu',
+                                kernel_regularizer=l2)(localization_input)
+    localization = layers.Dense(units=1, kernel_regularizer=l2)(localization)
+    
+    
+    
+    # Generates the subscore for the biological functions subnetwork
+    
+    bio_func_input = keras.Input(shape=(3464,))
+    bio_func = layers.Dense(units=2048, 
+                            activation='relu', 
+                            kernel_regularizer=l2)(bio_func_input)
+    k = 5
+    split_sets = k_split(train_validation_set, k)
+
+    start_time = time.time()
+    verbose = True
+    aucs = []
+    final_validation_losses = []
+    n_trials = 5
+    oversamples = vanilla_oversample(split_sets)
+    all_false_negs = []
+
+    for i in range(n_trials):
+        train_sets = [oversamples[x] for x in range(k) if x != i]
+        train_set = pd.concat(train_sets)
+        validation_set = split_sets[i]
+        (train_names, train_seq_and_struc, train_localization, train_bio_func, train_network_info, train_labels) = process_set(train_set)
+        (validation_names, validation_seq_and_struc, validation_localization, validation_bio_func, validation_network_info, validation_labels) = process_set(validation_set)
+        train_inputs = [train_seq_and_struc, train_localization, train_bio_func, train_network_info]
+        validation_inputs = [validation_seq_and_struc, validation_localization, validation_bio_func, validation_network_info]
+        print("Split #: ", i + 1)
+        model, history = fit_multiscore_nn(train_inputs, train_labels, validation_inputs, validation_labels)
+        probs = tf.keras.activations.sigmoid(model.predict(validation_inputs))
+        display_metrics(probs, validation_labels, history)
+        aucs.append(100 * roc_auc_score(y_true=validation_labels, y_score=probs))
+        score = model.evaluate(validation_inputs, validation_labels, verbose=False)
+        final_validation_losses.append(score[0])
+        false_negs = get_false_negatives(probs, validation_labels, validation_names)
+        all_false_negs += false_negs
+
+    print(aucs)
+    elapsed_time = time.time() - start_time
+    print("Time elapsed (s): ", elapsed_time)
+
+    def get_subscores(features, model):
+        subscores_model = keras.Model(inputs=model.input, outputs=model.get_layer('subscores').output)
+        model, history = fit_multiscore_nn(train_inputs, train_labels, validation_inputs, validation_labels)
+        probs = tf.keras.activations.sigmoid(model.predict(validation_inputs))
+        display_metrics(probs, validation_labels, history)
+        aucs.append(100 * roc_auc_score(y_true=validation_labels, y_score=probs))
+        score = model.evaluate(validation_inputs, validation_labels, verbose=False)
+        final_validation_losses.append(score[0])
+        false_negs = get_false_negatives(probs, validation_labels, validation_names)
+        all_false_negs += false_negs
+
+        print(aucs)
+        elapsed_time = time.time() - start_time
+        print("Time elapsed (s): ", elapsed_time)
+
+    def get_subscores(features, model):
+        subscores_model = keras.Model(inputs=model.input, outputs=model.get_layer('subscores').output)
+        subscores_output = subscores_model.predict(features, verbose=False)
+        total_scores = tf.math.reduce_sum(subscores_output, axis=1)
+        drug_probs = tf.keras.activations.sigmoid(tf.reshape(total_scores, shape=(len(total_scores),1))) * 100
+        subscores_output = tf.concat([drug_probs, subscores_output], axis=1)
+        return subscores_output

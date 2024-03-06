@@ -1,408 +1,69 @@
-{
- "cells": [
-  {
-   "cell_type": "code",
-   "execution_count": 1,
-   "id": "f44a5f26",
-   "metadata": {},
-   "outputs": [],
-   "source": [
-    "import numpy as np\n",
-    "import pandas as pd\n",
-    "\n",
-    "def standard_scale(df):\n",
-    "    \"\"\"\n",
-    "    Normalizes the data in each column of a Pandas dataframe to the mean and scales the standard deviation to 1.\n",
-    "\n",
-    "    Args:\n",
-    "    df (DataFrame): Pandas dataframe to standard scale\n",
-    "\n",
-    "    Returns:\n",
-    "    df_copy (DataFrame): a Pandas dataframe containing the scaled data\n",
-    "\n",
-    "    \"\"\"\n",
-    "    df_scaled = df.copy()\n",
-    "\n",
-    "    for col in df_scaled.columns:\n",
-    "        data_mean = df_scaled[col].mean()\n",
-    "        data_stdev = df_scaled[col].std()\n",
-    "        \n",
-    "        df_scaled[col] = (df_scaled[col] - data_mean) / data_stdev\n",
-    "            \n",
-    "    return df_scaled"
-   ]
-  },
-  {
-   "cell_type": "code",
-   "execution_count": 2,
-   "id": "ce304efa-bcf7-4093-a61a-729d7a1abd31",
-   "metadata": {},
-   "outputs": [],
-   "source": [
-    "# Imports the various feature sets in the dataset\n",
-    "\n",
-    "dezso_features = pd.read_csv(\"raw_data/dezso_features.csv\")\n",
-    "go_components = pd.read_csv(\"raw_data/go_components_10-14-22.csv\")\n",
-    "go_functions = pd.read_csv(\"raw_data/go_functions_10-14-22.csv\")\n",
-    "go_processes = pd.read_csv(\"raw_data/go_processes_10-14-22.csv\")\n",
-    "gdpc = pd.read_csv(\"raw_data/gdpc_10-14-22.csv\")\n",
-    "paac = pd.read_csv(\"raw_data/paac_10-14-22.csv\")\n",
-    "fpocket = pd.read_csv(\"raw_data/fpocket_output.csv\")\n",
-    "\n",
-    "\n",
-    "# Imports the list of proteins with their sequences and labels\n",
-    "\n",
-    "protein_list = pd.read_csv(\"raw_data/all_proteins.csv\")"
-   ]
-  },
-  {
-   "cell_type": "code",
-   "execution_count": 3,
-   "id": "b999504b-f2b8-428d-9bff-696c04204dcf",
-   "metadata": {},
-   "outputs": [],
-   "source": [
-    "dezso_names = dezso_features['Protein']\n",
-    "\n",
-    "features_categorical = dezso_features[['Enzyme Classification', \n",
-    "                                     'Localization', \n",
-    "                                     'Essentiality'\n",
-    "                                      ]]\n",
-    "\n",
-    "\n",
-    "# Obtains the one-hot encodings for the categorical features and categorical sub-networks\n",
-    "\n",
-    "features_categorical = pd.get_dummies(features_categorical.astype(str))\n",
-    "\n",
-    "features_numeric = dezso_features.drop(['Protein',\n",
-    "                                      'Enzyme Classification',  \n",
-    "                                      'Localization', \n",
-    "                                      'Essentiality'\n",
-    "                                       ], axis=1)\n",
-    "\n",
-    "\n",
-    "# Replaces string labels for two binary variables with 1 and 0\n",
-    "\n",
-    "features_numeric = features_numeric.replace({'Signal Peptide': {'Y': 1, 'N': 0}})\n",
-    "features_numeric = features_numeric.replace({'PEST region': {'Potential': 1, 'Poor': 0}})\n",
-    "\n",
-    "\n",
-    "# Scales the numeric data\n",
-    "\n",
-    "features_numeric = standard_scale(features_numeric)\n",
-    "    \n",
-    "    \n",
-    "# Re-assembles the feature matrix from the categorical, numeric, and sub-network features\n",
-    "\n",
-    "dezso_processed = pd.concat([dezso_names, features_categorical, features_numeric], axis=1)"
-   ]
-  },
-  {
-   "cell_type": "code",
-   "execution_count": 4,
-   "id": "aa188d7f-ce9f-4b87-ba51-f9e79fe1b2cc",
-   "metadata": {},
-   "outputs": [],
-   "source": [
-    "# Pivots the GO components from a list of protein-label pairs to a one-hot encoded matrix\n",
-    "\n",
-    "go_components_processed = go_components.copy()\n",
-    "\n",
-    "go_components_processed['label'] = 1\n",
-    "\n",
-    "go_components_processed = go_components_processed.pivot(index='Protein', columns='go_term', values='label').fillna(0)\n",
-    "\n",
-    "\n",
-    "# Removes GO annotations which apply to less than 10 proteins\n",
-    "\n",
-    "go_components_processed = go_components_processed[[x for x in go_components_processed.columns if go_components_processed[x].sum() >= 10]]\n",
-    "\n",
-    "go_components_processed.reset_index(inplace=True)"
-   ]
-  },
-  {
-   "cell_type": "code",
-   "execution_count": 5,
-   "id": "267be50b-92d3-4ba3-ba0b-bbfe11980b51",
-   "metadata": {},
-   "outputs": [],
-   "source": [
-    "# Pivots the GO functions from a list of protein-label pairs to a one-hot encoded matrix\n",
-    "\n",
-    "go_functions_processed = go_functions.copy()\n",
-    "\n",
-    "go_functions_processed['label'] = 1\n",
-    "\n",
-    "go_functions_processed = go_functions_processed.pivot(index='Protein', columns='go_term', values='label').fillna(0)\n",
-    "\n",
-    "\n",
-    "# Removes GO annotations which apply to less than 10 proteins\n",
-    "\n",
-    "go_functions_processed = go_functions_processed[[x for x in go_functions_processed.columns if go_functions_processed[x].sum() >= 10]]\n",
-    "\n",
-    "go_functions_processed.reset_index(inplace=True)"
-   ]
-  },
-  {
-   "cell_type": "code",
-   "execution_count": 6,
-   "id": "d71f8cfa-cba4-481b-aee1-eaf22c7e04b2",
-   "metadata": {},
-   "outputs": [],
-   "source": [
-    "# Pivots the GO processes from a list of protein-label pairs to a one-hot encoded matrix\n",
-    "\n",
-    "go_processes_processed = go_processes.copy()\n",
-    "\n",
-    "go_processes_processed['label'] = 1\n",
-    "\n",
-    "go_processes_processed = go_processes_processed.pivot(index='Protein', columns='go_term', values='label').fillna(0)\n",
-    "\n",
-    "\n",
-    "# Removes GO annotations which apply to less than 10 proteins\n",
-    "\n",
-    "go_processes_processed = go_processes_processed[[x for x in go_processes_processed.columns if go_processes_processed[x].sum() >= 10]]\n",
-    "\n",
-    "go_processes_processed.reset_index(inplace=True)"
-   ]
-  },
-  {
-   "cell_type": "code",
-   "execution_count": 7,
-   "id": "938112ed-fc22-4add-b201-f48976451d07",
-   "metadata": {},
-   "outputs": [],
-   "source": [
-    "# Standard-scales the Pseudo Amino Acid features\n",
-    "\n",
-    "paac_names = paac['Protein']\n",
-    "\n",
-    "paac_numeric = paac.drop('Protein', axis=1)\n",
-    "\n",
-    "paac_processed = standard_scale(paac_numeric)\n",
-    "\n",
-    "paac_processed = pd.concat([paac_names, paac_numeric], axis=1)"
-   ]
-  },
-  {
-   "cell_type": "code",
-   "execution_count": 8,
-   "id": "3e7707c3-4b68-4628-9c96-c0e85d056f90",
-   "metadata": {},
-   "outputs": [],
-   "source": [
-    "# Standard-scales the fpocket features\n",
-    "\n",
-    "fpocket_names = fpocket['Protein']\n",
-    "\n",
-    "fpocket_numeric = fpocket.drop('Protein', axis=1)\n",
-    "\n",
-    "fpocket_processed = standard_scale(fpocket_numeric)\n",
-    "\n",
-    "fpocket_processed = pd.concat([fpocket_names, fpocket_numeric], axis=1)"
-   ]
-  },
-  {
-   "cell_type": "code",
-   "execution_count": 9,
-   "id": "f222144f-d1e5-42b1-8122-a3e8d3389a29",
-   "metadata": {},
-   "outputs": [],
-   "source": [
-    "# Gets the names of all of the columns in each dataset, except for the ones from the original Dezso paper\n",
-    "\n",
-    "go_components_names = list(go_components_processed.columns)\n",
-    "go_functions_names = list(go_functions_processed.columns)\n",
-    "go_processes_names = list(go_processes_processed.columns)\n",
-    "gdpc_names = list(gdpc.columns)\n",
-    "paac_names = list(paac_processed.columns)\n",
-    "fpocket_names = list(fpocket_processed.columns)\n",
-    "\n",
-    "\n",
-    "# Specifies which features from the original Dezso paper belong in each subnetwork\n",
-    "\n",
-    "seq_and_struc_names = [ \n",
-    "    'Molecularweight',\n",
-    "    'Residues',\n",
-    "    'AvResWeight',\n",
-    "    'Charge',\n",
-    "    'Isoelectric',\n",
-    "    'A280_molar_ext',\n",
-    "    'A280_molar_ext_cyst',\n",
-    "    'A280_ext_coeff',\n",
-    "    'A280_ext_coeff_cyst',\n",
-    "    'Prob',\n",
-    "    'Ala',\n",
-    "    'Arg',\n",
-    "    'Asn',\n",
-    "    'Asp',\n",
-    "    'Cys',\n",
-    "    'Gln',\n",
-    "    'Glu',\n",
-    "    'Gly',\n",
-    "    'His',\n",
-    "    'Ile',\n",
-    "    'Leu',\n",
-    "    'Lys',\n",
-    "    'Met',\n",
-    "    'Phe',\n",
-    "    'Pro',\n",
-    "    'Ser',\n",
-    "    'Thr',\n",
-    "    'Trp',\n",
-    "    'Tyr',\n",
-    "    'Val',\n",
-    "    'Acidic',\n",
-    "    'Aliphatic',\n",
-    "    'Aromatic',\n",
-    "    'Basic',\n",
-    "    'Charged',\n",
-    "    'Non.polar',\n",
-    "    'Polar',\n",
-    "    'Small',\n",
-    "    'Tiny',\n",
-    "    'Glyc_N',\n",
-    "    'Glyc_O',\n",
-    "    'ph_TYR',\n",
-    "    'ph_THR',\n",
-    "    'ph_SER',\n",
-    "    'Transmembrane Helices',\n",
-    "    'Signal Peptide',\n",
-    "    'PEST region',\n",
-    "    'Secondary Structure (Helices)',\n",
-    "    'Secondary Structure (Betasheet)',\n",
-    "    'Secondary Structure (turn)',\n",
-    "    'Secondary Structure (coil)',\n",
-    "    'Solvent Accessibility'\n",
-    "] + paac_names + gdpc_names + fpocket_names\n",
-    "\n",
-    "localization_names = [\n",
-    "    'Tissue Specificity',\n",
-    "    'Localization_Chloroplast',\n",
-    "    'Localization_Cytoplasmic',\n",
-    "    'Localization_Cytoskeletal',\n",
-    "    'Localization_ER',\n",
-    "    'Localization_Extracellular',\n",
-    "    'Localization_Golgi',\n",
-    "    'Localization_Lysosomal',\n",
-    "    'Localization_Mitochondrial',\n",
-    "    'Localization_Nuclear',\n",
-    "    'Localization_Peroxisomal',\n",
-    "    'Localization_PlasmaMembrane',\n",
-    "    'Localization_Vacuole'\n",
-    "] + go_components_names\n",
-    "\n",
-    "bio_func_names = [\n",
-    "    'Enzyme Classification_Hydrolases',\n",
-    "    'Enzyme Classification_Isomerases',\n",
-    "    'Enzyme Classification_Ligases',\n",
-    "    'Enzyme Classification_Lyases',\n",
-    "    'Enzyme Classification_Not-Enzyme', \n",
-    "    'Enzyme Classification_Oxireductases',\n",
-    "    'Enzyme Classification_Transferases',\n",
-    "    'Enzyme Classification_Translocases',\n",
-    "    'Essentiality_Essential',\n",
-    "    'Essentiality_Non-Essential',\n",
-    "    'Essentiality_UNK',\n",
-    "    'Biological Process (1)',\n",
-    "    'Biological Process (2)',\n",
-    "    'Biological Process (3)',\n",
-    "    'Molecular Function (1)',\n",
-    "    'Molecular Function (2)',\n",
-    "    'Molecular Function (3)'\n",
-    "] + go_functions_names + go_processes_names\n",
-    "\n",
-    "network_info_names = pd.DataFrame(data={'network_info_names': [\n",
-    "    'Maps (1)',\n",
-    "    'Maps (2)',\n",
-    "    'Maps (3)',\n",
-    "    'Degree',\n",
-    "    'Closeness',\n",
-    "    'Betweeness',\n",
-    "    'EigenCent',\n",
-    "    'PageRank'\n",
-    "]})\n",
-    "\n",
-    "\n",
-    "# Generates dataframes containing the names of the proteins in each network, to be saved as CSVs\n",
-    "\n",
-    "seq_and_struc_names = pd.DataFrame(data={'seq_and_struc_names': [x for x in seq_and_struc_names if x != 'Protein']})\n",
-    "localization_names = pd.DataFrame(data={'localization_names': [x for x in localization_names if x != 'Protein']})\n",
-    "bio_func_names = pd.DataFrame(data={'bio_func_names': [x for x in bio_func_names if x != 'Protein']})"
-   ]
-  },
-  {
-   "cell_type": "code",
-   "execution_count": 10,
-   "id": "6ebb2b83-0764-46d9-b8da-d4947d972403",
-   "metadata": {},
-   "outputs": [],
-   "source": [
-    "# Generates the full feature set by merging the proteins and their labels with all of the feature sets\n",
-    "\n",
-    "full_set = protein_list.copy()\n",
-    "\n",
-    "go_sets = [go_components_processed, go_functions_processed, go_processes_processed]\n",
-    "\n",
-    "for x in go_sets:\n",
-    "    full_set = pd.merge(full_set, x, left_on='Protein', right_on='Protein', how='left')\n",
-    "\n",
-    "feature_sets = [dezso_processed, gdpc, paac_processed, fpocket_processed]\n",
-    "\n",
-    "for x in feature_sets:\n",
-    "    full_set = pd.merge(full_set, x, left_on='Protein', right_on='Protein', how='inner')\n",
-    "        \n",
-    "full_set = full_set.fillna(0)"
-   ]
-  },
-  {
-   "cell_type": "code",
-   "execution_count": 11,
-   "id": "3bbd7c7e-3e01-4de6-a52c-3fc4e5f473d4",
-   "metadata": {},
-   "outputs": [],
-   "source": [
-    "# Saves the full dataframe containing all features\n",
-    "\n",
-    "full_set.to_csv(\"processed_data/full_set.csv\")\n",
-    "\n",
-    "\n",
-    "# Saves the list of columns which will be used as the inputs to each network\n",
-    "\n",
-    "network_info_names.to_csv(\"processed_data/network_info_names.csv\")\n",
-    "seq_and_struc_names.to_csv(\"processed_data/seq_and_struc_names.csv\")\n",
-    "localization_names.to_csv(\"processed_data/localization_names.csv\")\n",
-    "bio_func_names.to_csv(\"processed_data/bio_func_names.csv\")"
-   ]
-  },
-  {
-   "cell_type": "code",
-   "execution_count": null,
-   "id": "5f24212b-29ab-4529-92aa-31dc946bb3a0",
-   "metadata": {},
-   "outputs": [],
-   "source": []
-  }
- ],
- "metadata": {
-  "kernelspec": {
-   "display_name": "Python 3 (ipykernel)",
-   "language": "python",
-   "name": "python3"
-  },
-  "language_info": {
-   "codemirror_mode": {
-    "name": "ipython",
-    "version": 3
-   },
-   "file_extension": ".py",
-   "mimetype": "text/x-python",
-   "name": "python",
-   "nbconvert_exporter": "python",
-   "pygments_lexer": "ipython3",
-   "version": "3.7.13"
-  }
- },
- "nbformat": 4,
- "nbformat_minor": 5
-}
+import numpy as np
+import pandas as pd
+
+
+def standard_scale(df):
+    """
+    Normalizes the data in each column of a Pandas dataframe to the mean and scales the standard deviation to 1.
+
+    Args:
+    df (DataFrame): Pandas dataframe to standard scale
+
+    Returns:
+    df_copy (DataFrame): a Pandas dataframe containing the scaled data
+
+    """
+    df_scaled = df.copy()
+
+    for col in df_scaled.columns:
+        data_mean = df_scaled[col].mean()
+        data_stdev = df_scaled[col].std()
+
+        df_scaled[col] = (df_scaled[col] - data_mean) / data_stdev
+
+    return df_scaled
+
+
+# Imports the various feature sets in the dataset
+
+dezso_features = pd.read_csv("raw_data/dezso_features.csv")
+go_components = pd.read_csv("raw_data/go_components_10-14-22.csv")
+go_functions = pd.read_csv("raw_data/go_functions_10-14-22.csv")
+go_processes = pd.read_csv("raw_data/go_processes_10-14-22.csv")
+gdpc = pd.read_csv("raw_data/gdpc_10-14-22.csv")
+paac = pd.read_csv("raw_data/paac_10-14-22.csv")
+fpocket = pd.read_csv("raw_data/fpocket_output.csv")
+
+
+# Imports the list of proteins with their sequences and labels
+
+protein_list = pd.read_csv("raw_data/all_proteins.csv")
+
+dezso_names = dezso_features["Protein"]
+
+features_categorical = dezso_features[
+    ["Enzyme Classification", "Localization", "Essentiality"]
+]
+
+
+# Obtains the one-hot encodings for the categorical features and categorical sub-networks
+
+features_categorical = pd.get_dummies(features_categorical.astype(str))
+
+features_numeric = dezso_features.drop(
+    ["Protein", "Enzyme Classification", "Localization", "Essentiality"], axis=1
+)
+
+
+# Replaces string labels for two binary variables with 1 and 0
+
+features_numeric = features_numeric.replace({"Signal Peptide": {"Y": 1, "N": 0}})
+features_numeric = features_numeric.replace(
+    {"PEST region": {"Potential": 1, "Poor": 0}}
+)
+
+features_numeric = standard_scale(features_numeric)
+
+dezso_processed = pd.concat(
+    [dezso_names, features_categorical, features_numeric], axis=1
+)
